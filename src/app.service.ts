@@ -16,15 +16,55 @@ export class AppService {
     if (!accessibleTypes.includes(file.mimetype)) {
       throw new Error('Not accessible type'); // error messages should be in constats file too
     }
-    let dataBuffer = file.buffer;
+    const dataBuffer = file.buffer;
     if (file.mimetype.split('/')[0] === 'image') {
       const imageHeight = Number(file.size.toString().substring(0, 3));
       const imageWidth = Number(file.size.toString().substring(3));
-      const resizeSize = this.findResizeSize(imageHeight, imageWidth);
-      dataBuffer = await sharp(dataBuffer)
-        .resize(resizeSize, resizeSize)
-        .toBuffer();
+      const resizeSizes = this.findResizeSize(imageHeight, imageWidth);
+      const promiseArr = [];
+      for (let i = 0; i < 3; i++) {
+        promiseArr.push(
+          new Promise((resolve) => {
+            const newDataBuffer = sharp(dataBuffer)
+              .resize(
+                Math.floor(resizeSizes.heights[i]),
+                Math.floor(resizeSizes.widths[i]),
+              )
+              .toBuffer();
+            resolve(newDataBuffer);
+          }).then((newDataBuffer) => {
+            return new Promise((resolve) =>
+              resolve(this.Uploading(newDataBuffer, filename)),
+            );
+          }),
+        );
+      }
+      const result = Promise.all(promiseArr);
+      return result;
     }
+    return await this.Uploading(dataBuffer, filename);
+  }
+  private findResizeSize(height, width) {
+    const neededSize = [2048, 1024, 300]; //should be in constants file
+    const resized = {
+      heights: [],
+      widths: [],
+    };
+    if (height >= width) {
+      resized.heights = neededSize;
+      neededSize.forEach((size) =>
+        resized.widths.push((size * width) / height),
+      );
+    } else {
+      resized.widths = neededSize;
+      neededSize.forEach((size) => {
+        resized.heights.push((size * height) / width);
+      });
+    }
+    return resized;
+  }
+
+  private async Uploading(dataBuffer, filename) {
     const s3 = new S3();
     const uploadResult = await s3
       .upload({
@@ -34,11 +74,5 @@ export class AppService {
       })
       .promise();
     return { key: uploadResult.Key, url: uploadResult.Location };
-  }
-  private findResizeSize(height, width) {
-    const sizeArr = [height, width];
-    sizeArr.sort();
-    const resize = sizeArr[0] > 2048 ? 2048 : sizeArr[0] > 1024 ? 1024 : 300;
-    return resize;
   }
 }
